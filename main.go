@@ -33,20 +33,21 @@ var (
 )
 
 type Context struct {
-	Args         []string
-	Cgroups      []string
-	AllCgroups   bool
-	Logs         bool
-	Notify       bool
-	Name         string
-	Env          bool
-	Rm           bool
-	Id           string
-	NotifySocket string
-	Cmd          *exec.Cmd
-	Pid          int
-	PidFile      string
-	Client       *dockerClient.Client
+	Args            []string
+	Cgroups         []string
+	AllCgroups      bool
+	UnifiedHiearchy bool
+	Logs            bool
+	Notify          bool
+	Name            string
+	Env             bool
+	Rm              bool
+	Id              string
+	NotifySocket    string
+	Cmd             *exec.Cmd
+	Pid             int
+	PidFile         string
+	Client          *dockerClient.Client
 }
 
 func setupEnvironment(c *Context) {
@@ -85,6 +86,7 @@ func parseContext(args []string) (*Context, error) {
 	flags.BoolVar(&c.Logs, []string{"l", "-logs"}, true, "pipe logs")
 	flags.BoolVar(&c.Notify, []string{"n", "-notify"}, false, "setup systemd notify for container")
 	flags.BoolVar(&c.Env, []string{"e", "-env"}, false, "inherit environment variable")
+	flags.BoolVar(&c.UnifiedHiearchy, []string{"-unifiedHierarchy"}, false, "use the unified cgroupv2 hiearchy at /sys/fs/cgroup/unified")
 	flags.Var(&flCgroups, []string{"c", "-cgroups"}, "cgroups to take ownership of or 'all' for all cgroups available")
 
 	err := flags.Parse(args)
@@ -316,14 +318,17 @@ func getCgroupsForPid(pid int) (map[string]string, error) {
 	return ret, nil
 }
 
-func constructCgroupPath(cgroupName string, cgroupPath string) string {
+func constructCgroupPath(c *Context, cgroupName string, cgroupPath string) string {
+	if cgroupName == "" && c.UnifiedHiearchy {
+		cgroupName = "unified"
+	}
 	return path.Join(SYSFS, strings.TrimPrefix(cgroupName, "name="), cgroupPath, PROCS)
 }
 
-func getCgroupPids(cgroupName string, cgroupPath string) ([]string, error) {
+func getCgroupPids(c *Context, cgroupName string, cgroupPath string) ([]string, error) {
 	ret := []string{}
 
-	file, err := os.Open(constructCgroupPath(cgroupName, cgroupPath))
+	file, err := os.Open(constructCgroupPath(c, cgroupName, cgroupPath))
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +387,7 @@ func moveCgroups(c *Context) (bool, error) {
 			continue
 		}
 
-		pids, err := getCgroupPids(nsName, containerPath)
+		pids, err := getCgroupPids(c, nsName, containerPath)
 		if err != nil {
 			return false, err
 		}
@@ -397,7 +402,7 @@ func moveCgroups(c *Context) (bool, error) {
 				continue
 			}
 
-			currentFullPath := constructCgroupPath(nsName, currentPath)
+			currentFullPath := constructCgroupPath(c, nsName, currentPath)
 			log.Printf("Moving pid %s to %s\n", pid, currentFullPath)
 			err = writePid(pid, currentFullPath)
 			if err != nil {
